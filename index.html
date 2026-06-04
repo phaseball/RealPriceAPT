@@ -89,6 +89,7 @@ nav button.on::after{content:'';position:absolute;left:10px;right:10px;bottom:-1
 
 /* ── chart ──────────────────────────── */
 .chart-box{position:relative;padding:18px 14px 10px}
+.chart-hint{position:absolute;top:8px;right:16px;font-size:10.5px;color:var(--ink-faint);font-family:var(--mono);letter-spacing:.02em;pointer-events:none}
 #chart{display:block;width:100%;height:430px;cursor:crosshair;touch-action:pan-y}
 #tip{
   position:absolute;pointer-events:none;display:none;z-index:5;
@@ -199,6 +200,7 @@ footer{margin-top:46px;font-size:11.5px;color:var(--ink-faint);text-align:center
     </div>
   </div>
   <div class="panel chart-box">
+    <div class="chart-hint">드래그 → 기간 평균 · 클릭 → 해제</div>
     <canvas id="chart"></canvas>
     <div id="tip"></div>
     <div id="chart-empty" class="empty-chart" style="display:none">표시할 거래가 없습니다 — 단지/면적 선택과 필터를 확인하세요.</div>
@@ -244,8 +246,8 @@ footer{margin-top:46px;font-size:11.5px;color:var(--ink-faint);text-align:center
 <script>
 'use strict';
 /* ═══════════════ version ═══════════════ */
-const APP_VERSION = '1.3';
-const APP_BUILT   = '2026-06-04 18:04 KST';
+const APP_VERSION = '1.4';
+const APP_BUILT   = '2026-06-04 18:12 KST';
 document.getElementById('ver-badge').textContent = `v${APP_VERSION} · ${APP_BUILT}`;
 
 /* ═══════════════ data layer ═══════════════ */
@@ -329,7 +331,7 @@ function renderChips(){
     const on = selApts.has(a);
     b.className='chip'+(on?' on':' off');
     b.innerHTML=`<span class="sw" style="background:${colorOf(a)}"></span>${a}`;
-    b.onclick=()=>{ on?selApts.delete(a):selApts.add(a); renderChips(); drawChart(); };
+    b.onclick=()=>{ on?selApts.delete(a):selApts.add(a); renderChips(); filtersChanged(); };
     ac.appendChild(b);
   });
   const gc = document.getElementById('area-chips');
@@ -339,15 +341,17 @@ function renderChips(){
     const on = selAreas.has(g);
     b.className='chip area'+(on?' on':' off');
     b.textContent=`${g}㎡대`;
-    b.onclick=()=>{ on?selAreas.delete(g):selAreas.add(g); renderChips(); drawChart(); };
+    b.onclick=()=>{ on?selAreas.delete(g):selAreas.add(g); renderChips(); filtersChanged(); };
     gc.appendChild(b);
   });
 }
-document.getElementById('no-low').addEventListener('change', e=>{ excludeLow = e.target.checked; drawChart(); });
+document.getElementById('no-low').addEventListener('change', e=>{ excludeLow = e.target.checked; filtersChanged(); });
 
 /* ═══════════════ chart ═══════════════ */
 const cv = document.getElementById('chart'), tip = document.getElementById('tip');
-let geo = null;   // layout geometry for hover
+let geo = null;       // layout geometry for hover
+let rangeSel = null;  // pinned/live period selection {a,b} (month indices)
+let dragSt = null;    // mouse-drag state
 
 function drawChart(){
   const box = cv.parentElement, emptyEl = document.getElementById('chart-empty');
@@ -406,6 +410,18 @@ function drawChart(){
   ctx.strokeStyle='rgba(29,36,51,.35)';
   ctx.beginPath(); ctx.moveTo(padL,H-padB); ctx.lineTo(W-padR,H-padB); ctx.stroke();
 
+  /* period selection band */
+  if(rangeSel){
+    const xa = Math.max(X(rangeSel.a)-monthW/2, padL);
+    const xb = Math.min(X(rangeSel.b)+monthW/2, W-padR);
+    ctx.fillStyle='rgba(210,74,38,.08)';
+    ctx.fillRect(xa, padT, xb-xa, ph);
+    ctx.strokeStyle='rgba(210,74,38,.5)'; ctx.setLineDash([4,3]); ctx.lineWidth=1;
+    ctx.beginPath(); ctx.moveTo(xa,padT); ctx.lineTo(xa,padT+ph);
+    ctx.moveTo(xb,padT); ctx.lineTo(xb,padT+ph); ctx.stroke();
+    ctx.setLineDash([]);
+  }
+
   /* points (spread within month by contract day)
      layer order = order the 단지 chips were clicked; last-clicked drawn on top */
   const hoverIdx = geo?.hoverIdx ?? null;
@@ -419,18 +435,19 @@ function drawChart(){
   }
   pts.sort((a,b)=> order.indexOf(a.t.apt) - order.indexOf(b.t.apt));
   for(const p of pts){
-    const hot = hoverIdx!==null && p.mi===hoverIdx;
+    const hot = !rangeSel && hoverIdx!==null && p.mi===hoverIdx;
+    const inR = rangeSel && p.mi>=rangeSel.a && p.mi<=rangeSel.b;
     ctx.beginPath();
     ctx.arc(p.x,p.y, hot?4.8:2.9, 0, Math.PI*2);
     ctx.fillStyle = colorOf(p.t.apt);
-    ctx.globalAlpha = hoverIdx===null ? .85 : (hot?1:.25);
+    ctx.globalAlpha = rangeSel ? (inR?.95:.18) : (hoverIdx===null ? .85 : (hot?1:.25));
     ctx.fill();
     if(hot){ ctx.globalAlpha=1; ctx.lineWidth=1.5; ctx.strokeStyle='#fffdf8'; ctx.stroke(); }
   }
   ctx.globalAlpha=1;
 
   /* hover month guide */
-  if(hoverIdx!==null && hoverIdx>=i0 && hoverIdx<=i1){
+  if(!rangeSel && hoverIdx!==null && hoverIdx>=i0 && hoverIdx<=i1){
     const x=X(hoverIdx);
     ctx.strokeStyle='rgba(210,74,38,.5)'; ctx.setLineDash([4,3]); ctx.lineWidth=1;
     ctx.beginPath(); ctx.moveTo(x,padT); ctx.lineTo(x,H-padB); ctx.stroke();
@@ -472,7 +489,19 @@ function handleHover(clientX, clientY){
   });
   if(monthTx.length>MAX) html+=`<div class="more">+ ${monthTx.length-MAX}건 더</div>`;
   tip.innerHTML=html; tip.style.display='block';
+  placeTip(clientX, clientY);
+}
+function clearHover(){
+  tip.style.display='none';
+  if(geo && geo.hoverIdx!==null){ geo.hoverIdx=null; drawChart(); }
+}
 
+/* ── period drag selection ── */
+function miAt(x){
+  const mi = Math.round(geo.i0 + (x-geo.padL)/(geo.W-geo.padL-geo.padR)*(geo.i1-geo.i0));
+  return Math.max(geo.i0, Math.min(geo.i1, mi));
+}
+function placeTip(clientX, clientY){
   const box = cv.parentElement.getBoundingClientRect();
   const tw = tip.offsetWidth, th = tip.offsetHeight;
   let tx = clientX-box.left+14, ty = clientY-box.top+14;
@@ -480,14 +509,76 @@ function handleHover(clientX, clientY){
   if (ty+th > box.height-8) ty = Math.max(6, clientY-box.top-th-14);
   tip.style.left=tx+'px'; tip.style.top=ty+'px';
 }
-function clearHover(){
-  tip.style.display='none';
-  if(geo && geo.hoverIdx!==null){ geo.hoverIdx=null; drawChart(); }
+function showRangeTip(clientX, clientY){
+  if(!rangeSel || !geo) return;
+  const {a,b} = rangeSel;
+  const txs = geo.data.filter(t=>{const m=ymIndex(t.ym); return m>=a&&m<=b;})
+    .sort((x,y)=> y.ym.localeCompare(x.ym) || y.day-x.day);
+  let html = `<div class="tip-month">${fmtYM(idxToYM(a))} ~ ${fmtYM(idxToYM(b))}<em>${txs.length}건</em></div>`;
+  if(!txs.length){
+    html += `<div class="more">선택 구간에 거래가 없습니다</div>`;
+  } else {
+    const byApt = new Map();
+    for(const t of txs){ if(!byApt.has(t.apt)) byApt.set(t.apt,[]); byApt.get(t.apt).push(t.price); }
+    if(byApt.size>1){
+      const all = Math.round(txs.reduce((s,t)=>s+t.price,0)/txs.length);
+      html += `<div class="trow avg"><span class="sw" style="background:#f2efe8"></span>
+        <span class="meta">전체 평균 · ${txs.length}건</span><span class="pr">${fmtPrice(all)}</span></div>`;
+    }
+    [...byApt.entries()]
+      .map(([apt,ps])=>({apt, n:ps.length, avg:Math.round(ps.reduce((s,p)=>s+p,0)/ps.length)}))
+      .sort((x,y)=>y.avg-x.avg)
+      .forEach(v=>{
+        html += `<div class="trow avg"><span class="sw" style="background:${colorOf(v.apt)}"></span>
+          <span class="meta">${v.apt} 평균 · ${v.n}건</span><span class="pr">${fmtPrice(v.avg)}</span></div>`;
+      });
+    html += `<div class="tip-div"></div>`;
+    const MAXR=16;
+    txs.slice(0,MAXR).forEach(t=>{
+      html += `<div class="trow"><span class="sw" style="background:${colorOf(t.apt)}"></span>
+        <span class="meta">${t.ym.slice(2,4)}.${t.ym.slice(4)}.${String(t.day).padStart(2,'0')} · ${t.area}㎡ · ${t.floor}층</span>
+        <span class="pr">${fmtPrice(t.price)}</span></div>`;
+    });
+    if(txs.length>MAXR) html += `<div class="more">+ ${txs.length-MAXR}건 더 — [거래 내역] 탭 참고</div>`;
+  }
+  tip.innerHTML=html; tip.style.display='block';
+  placeTip(clientX, clientY);
 }
-cv.addEventListener('mousemove', e=>handleHover(e.clientX,e.clientY));
-cv.addEventListener('mouseleave', clearHover);
-cv.addEventListener('touchstart', e=>{ const t=e.touches[0]; handleHover(t.clientX,t.clientY); }, {passive:true});
-cv.addEventListener('touchmove', e=>{ const t=e.touches[0]; handleHover(t.clientX,t.clientY); }, {passive:true});
+function clearRange(){
+  if(rangeSel){ rangeSel=null; tip.style.display='none'; drawChart(); }
+}
+function filtersChanged(){ clearRange(); drawChart(); }
+
+cv.addEventListener('mousedown', e=>{
+  if(!geo) return;
+  const r=cv.getBoundingClientRect(), x=e.clientX-r.left;
+  if(x<geo.padL-8||x>geo.W-geo.padR+8) return;
+  dragSt = {x0:x, mi0:miAt(x), moved:false};
+  e.preventDefault();
+});
+cv.addEventListener('mousemove', e=>{
+  if(!geo) return;
+  if(dragSt){
+    const r=cv.getBoundingClientRect(), x=e.clientX-r.left;
+    if(dragSt.moved || Math.abs(x-dragSt.x0)>4){
+      dragSt.moved=true;
+      const m1=miAt(x);
+      rangeSel = {a:Math.min(dragSt.mi0,m1), b:Math.max(dragSt.mi0,m1)};
+      drawChart();
+      showRangeTip(e.clientX,e.clientY);
+    }
+  } else if(!rangeSel){
+    handleHover(e.clientX,e.clientY);
+  }
+});
+window.addEventListener('mouseup', ()=>{
+  if(!dragSt) return;
+  const wasDrag=dragSt.moved; dragSt=null;
+  if(!wasDrag) clearRange();          // simple click: dismiss pinned range
+});
+cv.addEventListener('mouseleave', ()=>{ if(!rangeSel && !dragSt) clearHover(); });
+cv.addEventListener('touchstart', e=>{ if(rangeSel) return; const t=e.touches[0]; handleHover(t.clientX,t.clientY); }, {passive:true});
+cv.addEventListener('touchmove', e=>{ if(rangeSel) return; const t=e.touches[0]; handleHover(t.clientX,t.clientY); }, {passive:true});
 window.addEventListener('resize', ()=>drawChart());
 
 /* ═══════════════ transaction list ═══════════════ */
@@ -681,6 +772,7 @@ document.querySelectorAll('nav button').forEach(b=>{
 
 function refreshAll(){
   syncSelections();
+  rangeSel=null; tip.style.display='none';
   renderStats(); renderChips(); renderListChips(); drawChart(); renderList(); renderSummary();
 }
 refreshAll();
