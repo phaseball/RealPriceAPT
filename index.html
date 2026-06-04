@@ -99,6 +99,9 @@ nav button.on::after{content:'';position:absolute;left:10px;right:10px;bottom:-1
 #tip .tip-month{font-family:var(--mono);font-weight:600;font-size:12.5px;letter-spacing:.03em;border-bottom:1px solid rgba(255,255,255,.18);padding-bottom:6px;margin-bottom:6px;display:flex;justify-content:space-between}
 #tip .tip-month em{font-style:normal;color:#b8bdc9;font-size:11px}
 #tip .trow{display:flex;align-items:baseline;gap:7px;padding:2.5px 0;line-height:1.35}
+#tip .trow.avg .meta{color:#f2efe8;font-weight:600}
+#tip .trow.avg .pr{color:#ffb39e}
+#tip .tip-div{border-top:1px dashed rgba(255,255,255,.22);margin:6px 0 5px}
 #tip .trow .sw{width:8px;height:8px;border-radius:50%;flex:none;align-self:center}
 #tip .trow .meta{color:#c4c9d4;font-size:11px;flex:1;white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
 #tip .trow .pr{font-family:var(--mono);font-weight:600;font-size:12px;white-space:nowrap}
@@ -202,6 +205,9 @@ footer{margin-top:46px;font-size:11.5px;color:var(--ink-faint);text-align:center
 
 <!-- ════ PAGE: LIST ════ -->
 <section id="page-list" class="page">
+  <div class="panel controls">
+    <div class="ctl-row"><span class="ctl-label">단지</span><span id="list-chips"></span></div>
+  </div>
   <div id="list-root"></div>
 </section>
 
@@ -259,6 +265,7 @@ function persist(){ try{ store.set(SKEY, JSON.stringify(txns)); }catch(e){} }
 
 /* selections */
 let selApts = new Set(), selAreas = new Set(), excludeLow = false;
+let listSel = new Set();                      // 거래내역 page selection (independent)
 function aptList(){ return [...new Set(txns.map(t=>t.apt))].sort((a,b)=>a.localeCompare(b,'ko')); }
 function areaGroups(){ return [...new Set(txns.map(t=>Math.floor(t.area)))].sort((a,b)=>a-b); }
 function colorOf(apt){ const i = aptList().indexOf(apt); return PALETTE[i % PALETTE.length]; }
@@ -267,11 +274,14 @@ function syncSelections(){
   selApts = new Set([...selApts].filter(a=>apts.includes(a)));
   apts.forEach(a=>{ if(!seenApts.has(a)){ seenApts.add(a); selApts.add(a);} });
   if(!selApts.size) selApts = new Set(apts);
+  listSel = new Set([...listSel].filter(a=>apts.includes(a)));
+  apts.forEach(a=>{ if(!seenListApts.has(a)){ seenListApts.add(a); listSel.add(a);} });
+  if(!listSel.size) listSel = new Set(apts);
   selAreas = new Set([...selAreas].filter(g=>areas.includes(g)));
   areas.forEach(g=>{ if(!seenAreas.has(g)){ seenAreas.add(g); selAreas.add(g);} });
   if(!selAreas.size) selAreas = new Set(areas);
 }
-const seenApts = new Set(), seenAreas = new Set();
+const seenApts = new Set(), seenAreas = new Set(), seenListApts = new Set();
 
 /* filtered view for the chart */
 function visibleTxns(){
@@ -389,8 +399,10 @@ function drawChart(){
   ctx.strokeStyle='rgba(29,36,51,.35)';
   ctx.beginPath(); ctx.moveTo(padL,H-padB); ctx.lineTo(W-padR,H-padB); ctx.stroke();
 
-  /* points (spread within month by contract day) */
+  /* points (spread within month by contract day)
+     layer order = order the 단지 chips were clicked; last-clicked drawn on top */
   const hoverIdx = geo?.hoverIdx ?? null;
+  const order = [...selApts];
   const pts=[];
   for(const t of data){
     const mi=ymIndex(t.ym);
@@ -398,14 +410,15 @@ function drawChart(){
     const y = Y(t.price);
     pts.push({x,y,mi,t});
   }
+  pts.sort((a,b)=> order.indexOf(a.t.apt) - order.indexOf(b.t.apt));
   for(const p of pts){
     const hot = hoverIdx!==null && p.mi===hoverIdx;
     ctx.beginPath();
-    ctx.arc(p.x,p.y, hot?6:4.2, 0, Math.PI*2);
+    ctx.arc(p.x,p.y, hot?4.8:2.9, 0, Math.PI*2);
     ctx.fillStyle = colorOf(p.t.apt);
     ctx.globalAlpha = hoverIdx===null ? .85 : (hot?1:.25);
     ctx.fill();
-    if(hot){ ctx.globalAlpha=1; ctx.lineWidth=2; ctx.strokeStyle='#fffdf8'; ctx.stroke(); }
+    if(hot){ ctx.globalAlpha=1; ctx.lineWidth=1.5; ctx.strokeStyle='#fffdf8'; ctx.stroke(); }
   }
   ctx.globalAlpha=1;
 
@@ -432,6 +445,19 @@ function handleHover(clientX, clientY){
 
   const MAX=14;
   let html = `<div class="tip-month">${fmtYM(ym)}<em>${monthTx.length}건</em></div>`;
+  /* per-apt monthly averages first */
+  const byApt = new Map();
+  for(const t of monthTx){ if(!byApt.has(t.apt)) byApt.set(t.apt,[]); byApt.get(t.apt).push(t.price); }
+  [...byApt.entries()]
+    .map(([apt,ps])=>({apt, n:ps.length, avg:Math.round(ps.reduce((s,p)=>s+p,0)/ps.length)}))
+    .sort((a,b)=>b.avg-a.avg)
+    .forEach(a=>{
+      html += `<div class="trow avg"><span class="sw" style="background:${colorOf(a.apt)}"></span>
+        <span class="meta">${a.apt} 평균 · ${a.n}건</span>
+        <span class="pr">${fmtPrice(a.avg)}</span></div>`;
+    });
+  html += `<div class="tip-div"></div>`;
+  /* then every transaction of the month */
   monthTx.slice(0,MAX).forEach(t=>{
     html += `<div class="trow"><span class="sw" style="background:${colorOf(t.apt)}"></span>
       <span class="meta">${t.apt} · ${t.area}㎡ · ${t.floor}층</span>
@@ -458,12 +484,26 @@ cv.addEventListener('touchmove', e=>{ const t=e.touches[0]; handleHover(t.client
 window.addEventListener('resize', ()=>drawChart());
 
 /* ═══════════════ transaction list ═══════════════ */
+function renderListChips(){
+  const lc=document.getElementById('list-chips');
+  lc.innerHTML='';
+  aptList().forEach(a=>{
+    const b=document.createElement('button');
+    const on=listSel.has(a);
+    b.className='chip'+(on?' on':' off');
+    b.innerHTML=`<span class="sw" style="background:${colorOf(a)}"></span>${a}`;
+    b.onclick=()=>{ on?listSel.delete(a):listSel.add(a); renderListChips(); renderList(); };
+    lc.appendChild(b);
+  });
+}
 function renderList(){
   const root=document.getElementById('list-root');
   root.innerHTML='';
   const apts=aptList();
   if(!apts.length){ root.innerHTML='<div class="panel" style="padding:50px;text-align:center;color:var(--ink-faint)">데이터가 없습니다. [데이터 관리] 탭에서 파일을 추가하세요.</div>'; return; }
-  for(const a of apts){
+  const shown = apts.filter(a=>listSel.has(a));
+  if(!shown.length){ root.innerHTML='<div class="panel" style="padding:50px;text-align:center;color:var(--ink-faint)">위에서 단지를 선택하세요.</div>'; return; }
+  for(const a of shown){
     const list = txns.filter(t=>t.apt===a)
       .sort((x,y)=> y.ym.localeCompare(x.ym) || y.day-x.day || y.price-x.price);
     const card=document.createElement('div');
@@ -634,7 +674,7 @@ document.querySelectorAll('nav button').forEach(b=>{
 
 function refreshAll(){
   syncSelections();
-  renderStats(); renderChips(); drawChart(); renderList(); renderSummary();
+  renderStats(); renderChips(); renderListChips(); drawChart(); renderList(); renderSummary();
 }
 refreshAll();
 </script>
