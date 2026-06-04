@@ -1,0 +1,642 @@
+<!DOCTYPE html>
+<html lang="ko">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>실거래가 트래커</title>
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link href="https://fonts.googleapis.com/css2?family=IBM+Plex+Sans+KR:wght@400;500;600;700&family=IBM+Plex+Mono:wght@400;500;600&display=swap" rel="stylesheet">
+<script src="https://cdnjs.cloudflare.com/ajax/libs/xlsx/0.18.5/xlsx.full.min.js"></script>
+<style>
+:root{
+  --paper:#f7f4ee;
+  --paper-deep:#efeae0;
+  --card:#fffdf8;
+  --ink:#1d2433;
+  --ink-soft:#5a6275;
+  --ink-faint:#9aa0b0;
+  --line:#ddd6c8;
+  --line-soft:#e9e3d6;
+  --accent:#d24a26;
+  --accent-soft:#fbe9e2;
+  --good:#1f7a5c;
+  --mono:'IBM Plex Mono',monospace;
+  --sans:'IBM Plex Sans KR',sans-serif;
+  --shadow:0 1px 2px rgba(29,36,51,.05),0 8px 24px -12px rgba(29,36,51,.18);
+}
+*{box-sizing:border-box;margin:0;padding:0}
+html{-webkit-text-size-adjust:100%}
+body{
+  font-family:var(--sans);
+  background:
+    radial-gradient(1100px 500px at 85% -10%, rgba(210,74,38,.06), transparent 60%),
+    repeating-linear-gradient(0deg, transparent 0 31px, rgba(29,36,51,.025) 31px 32px),
+    var(--paper);
+  color:var(--ink);
+  min-height:100vh;
+  line-height:1.55;
+}
+.wrap{max-width:1080px;margin:0 auto;padding:0 20px 80px}
+
+/* ── header ─────────────────────────── */
+header{padding:34px 0 18px;display:flex;flex-wrap:wrap;align-items:flex-end;gap:14px;justify-content:space-between;border-bottom:2px solid var(--ink)}
+.brand h1{font-size:25px;font-weight:700;letter-spacing:-.5px;line-height:1.2}
+.brand h1 .dot{color:var(--accent)}
+.brand p{font-size:12.5px;color:var(--ink-soft);margin-top:3px}
+.head-stats{display:flex;gap:22px;font-family:var(--mono)}
+.hs{text-align:right}
+.hs b{display:block;font-size:19px;font-weight:600;letter-spacing:-.3px}
+.hs span{font-size:10.5px;color:var(--ink-faint);letter-spacing:.06em}
+
+/* ── tabs ───────────────────────────── */
+nav{display:flex;gap:4px;margin:18px 0 22px;border-bottom:1px solid var(--line)}
+nav button{
+  appearance:none;border:none;background:none;cursor:pointer;
+  font-family:var(--sans);font-size:14.5px;font-weight:600;color:var(--ink-faint);
+  padding:9px 16px 11px;position:relative;letter-spacing:-.2px;transition:color .15s;
+}
+nav button:hover{color:var(--ink-soft)}
+nav button.on{color:var(--ink)}
+nav button.on::after{content:'';position:absolute;left:10px;right:10px;bottom:-1px;height:3px;background:var(--accent);border-radius:2px 2px 0 0}
+.page{display:none}
+.page.on{display:block;animation:fade .25s ease}
+@keyframes fade{from{opacity:0;transform:translateY(4px)}to{opacity:1;transform:none}}
+
+/* ── panels & controls ──────────────── */
+.panel{background:var(--card);border:1px solid var(--line);border-radius:12px;box-shadow:var(--shadow)}
+.controls{padding:16px 18px;display:flex;flex-direction:column;gap:12px;margin-bottom:14px}
+.ctl-row{display:flex;flex-wrap:wrap;align-items:center;gap:8px}
+.ctl-label{font-size:11px;font-weight:700;color:var(--ink-faint);letter-spacing:.1em;width:64px;flex:none}
+.chip{
+  appearance:none;cursor:pointer;font-family:var(--sans);font-size:13px;font-weight:500;
+  border:1px solid var(--line);background:var(--paper);color:var(--ink-soft);
+  border-radius:999px;padding:5px 13px 5px 9px;display:inline-flex;align-items:center;gap:7px;
+  transition:all .15s;
+}
+.chip .sw{width:9px;height:9px;border-radius:50%;background:var(--ink-faint);flex:none;transition:all .15s}
+.chip.on{background:var(--ink);border-color:var(--ink);color:#fff}
+.chip.off .sw{background:var(--line)!important}
+.chip:hover{border-color:var(--ink-soft)}
+.chip.area{padding:5px 13px;font-family:var(--mono);font-size:12.5px}
+.toggle{display:inline-flex;align-items:center;gap:8px;cursor:pointer;font-size:13.5px;color:var(--ink-soft);user-select:none}
+.toggle input{display:none}
+.tg{width:34px;height:19px;border-radius:999px;background:var(--line);position:relative;transition:background .15s;flex:none}
+.tg::after{content:'';position:absolute;top:2.5px;left:3px;width:14px;height:14px;border-radius:50%;background:#fff;transition:transform .15s;box-shadow:0 1px 2px rgba(0,0,0,.2)}
+.toggle input:checked + .tg{background:var(--accent)}
+.toggle input:checked + .tg::after{transform:translateX(14px)}
+.toggle input:checked ~ span{color:var(--ink);font-weight:600}
+
+/* ── chart ──────────────────────────── */
+.chart-box{position:relative;padding:18px 14px 10px}
+#chart{display:block;width:100%;height:430px;cursor:crosshair;touch-action:pan-y}
+#tip{
+  position:absolute;pointer-events:none;display:none;z-index:5;
+  background:rgba(29,36,51,.97);color:#f2efe8;border-radius:9px;
+  padding:10px 12px;min-width:230px;max-width:300px;
+  box-shadow:0 6px 28px -6px rgba(29,36,51,.55);
+  font-size:12px;backdrop-filter:blur(2px);
+}
+#tip .tip-month{font-family:var(--mono);font-weight:600;font-size:12.5px;letter-spacing:.03em;border-bottom:1px solid rgba(255,255,255,.18);padding-bottom:6px;margin-bottom:6px;display:flex;justify-content:space-between}
+#tip .tip-month em{font-style:normal;color:#b8bdc9;font-size:11px}
+#tip .trow{display:flex;align-items:baseline;gap:7px;padding:2.5px 0;line-height:1.35}
+#tip .trow .sw{width:8px;height:8px;border-radius:50%;flex:none;align-self:center}
+#tip .trow .meta{color:#c4c9d4;font-size:11px;flex:1;white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
+#tip .trow .pr{font-family:var(--mono);font-weight:600;font-size:12px;white-space:nowrap}
+#tip .more{color:#9aa0b0;font-size:11px;padding-top:4px}
+.empty-chart{padding:80px 20px;text-align:center;color:var(--ink-faint);font-size:14px}
+
+/* ── transactions ───────────────────── */
+.apt-card{margin-bottom:18px;overflow:hidden}
+.apt-head{display:flex;flex-wrap:wrap;align-items:center;gap:10px;padding:14px 18px;border-bottom:1px solid var(--line-soft);background:linear-gradient(to bottom,var(--card),var(--paper-deep) 400%)}
+.apt-head .sw{width:11px;height:11px;border-radius:50%}
+.apt-head h3{font-size:16px;font-weight:700;letter-spacing:-.3px}
+.apt-head .cnt{font-family:var(--mono);font-size:11.5px;color:var(--ink-faint);margin-left:auto}
+.tbl-wrap{overflow-x:auto}
+table{width:100%;border-collapse:collapse;font-size:13px}
+th{font-size:10.5px;font-weight:700;color:var(--ink-faint);letter-spacing:.08em;text-align:left;padding:9px 14px;border-bottom:1px solid var(--line-soft);white-space:nowrap}
+td{padding:8px 14px;border-bottom:1px solid var(--line-soft);white-space:nowrap}
+tr:last-child td{border-bottom:none}
+tbody tr:hover{background:var(--accent-soft)}
+td.mono{font-family:var(--mono);font-size:12.5px}
+td.price{font-family:var(--mono);font-weight:600;text-align:right}
+td.dim{color:var(--ink-soft)}
+.low-tag{display:inline-block;font-size:9.5px;font-weight:700;color:var(--accent);border:1px solid currentColor;border-radius:4px;padding:0 4px;margin-left:6px;vertical-align:1px;letter-spacing:.04em}
+
+/* ── data page ──────────────────────── */
+.drop{
+  border:2px dashed var(--line);border-radius:12px;background:var(--card);
+  padding:46px 24px;text-align:center;cursor:pointer;transition:all .15s;
+}
+.drop:hover,.drop.over{border-color:var(--accent);background:var(--accent-soft)}
+.drop .big{font-size:16px;font-weight:600;margin-bottom:5px}
+.drop .small{font-size:12.5px;color:var(--ink-soft)}
+.drop .small code{font-family:var(--mono);font-size:11.5px;background:var(--paper-deep);padding:1px 5px;border-radius:4px}
+#file-in{display:none}
+.log{margin-top:14px;display:flex;flex-direction:column;gap:8px}
+.log-item{padding:11px 15px;font-size:13px;display:flex;flex-wrap:wrap;gap:6px 14px;align-items:baseline}
+.log-item b{font-weight:600}
+.log-item .ok{color:var(--good);font-weight:600;font-family:var(--mono);font-size:12.5px}
+.log-item .dup{color:var(--ink-faint);font-family:var(--mono);font-size:12.5px}
+.log-item .ex{color:var(--accent);font-family:var(--mono);font-size:12.5px}
+.log-item.err{border-left:3px solid var(--accent)}
+.data-actions{margin-top:22px;display:flex;flex-wrap:wrap;gap:9px}
+.btn{
+  appearance:none;cursor:pointer;font-family:var(--sans);font-size:13px;font-weight:600;
+  border:1px solid var(--line);background:var(--card);color:var(--ink);
+  border-radius:8px;padding:8px 15px;transition:all .15s;
+}
+.btn:hover{border-color:var(--ink);box-shadow:var(--shadow)}
+.btn.danger{color:var(--accent)}
+.btn.danger:hover{border-color:var(--accent);background:var(--accent-soft)}
+.store-note{margin-top:14px;font-size:12px;color:var(--ink-faint);display:flex;align-items:center;gap:7px}
+.store-note .led{width:7px;height:7px;border-radius:50%;background:var(--good)}
+.store-note.off .led{background:var(--ink-faint)}
+.sum-tbl{margin-top:24px}
+.sum-tbl h3{font-size:13px;font-weight:700;letter-spacing:.02em;margin-bottom:10px;color:var(--ink-soft)}
+footer{margin-top:46px;font-size:11.5px;color:var(--ink-faint);text-align:center;line-height:1.7}
+@media(max-width:640px){
+  .head-stats{width:100%;justify-content:space-between}
+  .hs{text-align:left}
+  #chart{height:340px}
+  .ctl-label{width:100%}
+}
+</style>
+</head>
+<body>
+<div class="wrap">
+
+<header>
+  <div class="brand">
+    <h1>실거래가 트래커<span class="dot">.</span></h1>
+    <p>국토교통부 아파트 매매 실거래 — 해제·직거래 자동 제외</p>
+  </div>
+  <div class="head-stats">
+    <div class="hs"><b id="st-n">0</b><span>거래</span></div>
+    <div class="hs"><b id="st-a">0</b><span>단지</span></div>
+    <div class="hs"><b id="st-r">–</b><span>기간</span></div>
+  </div>
+</header>
+
+<nav>
+  <button data-page="chart" class="on">가격 차트</button>
+  <button data-page="list">거래 내역</button>
+  <button data-page="data">데이터 관리</button>
+</nav>
+
+<!-- ════ PAGE: CHART ════ -->
+<section id="page-chart" class="page on">
+  <div class="panel controls">
+    <div class="ctl-row"><span class="ctl-label">단지</span><span id="apt-chips"></span></div>
+    <div class="ctl-row"><span class="ctl-label">전용면적</span><span id="area-chips"></span></div>
+    <div class="ctl-row">
+      <span class="ctl-label">옵션</span>
+      <label class="toggle"><input type="checkbox" id="no-low"><span class="tg"></span><span>저층(1·2·3층) 제외</span></label>
+    </div>
+  </div>
+  <div class="panel chart-box">
+    <canvas id="chart"></canvas>
+    <div id="tip"></div>
+    <div id="chart-empty" class="empty-chart" style="display:none">표시할 거래가 없습니다 — 단지/면적 선택과 필터를 확인하세요.</div>
+  </div>
+</section>
+
+<!-- ════ PAGE: LIST ════ -->
+<section id="page-list" class="page">
+  <div id="list-root"></div>
+</section>
+
+<!-- ════ PAGE: DATA ════ -->
+<section id="page-data" class="page">
+  <div class="drop" id="drop">
+    <div class="big">새 데이터 파일 추가 — 클릭 또는 드래그</div>
+    <div class="small">국토교통부 실거래가 공개시스템에서 받은 <code>.xlsx</code> 파일 (여러 개 동시 가능)<br>
+    기존 데이터와 겹치는 거래는 자동으로 건너뛰고, 새 거래만 추가합니다. 해제(취소)·직거래 건은 제외됩니다.</div>
+  </div>
+  <input type="file" id="file-in" accept=".xlsx,.xls,.csv" multiple>
+  <div class="log" id="log"></div>
+
+  <div class="data-actions">
+    <button class="btn" id="btn-export">데이터 내보내기 (.json)</button>
+    <button class="btn" id="btn-import">데이터 가져오기 (.json)</button>
+    <button class="btn danger" id="btn-reset">초기 샘플로 재설정</button>
+    <button class="btn danger" id="btn-clear">전체 삭제</button>
+  </div>
+  <input type="file" id="json-in" accept=".json" style="display:none">
+  <div class="store-note" id="store-note"><span class="led"></span><span></span></div>
+
+  <div class="sum-tbl">
+    <h3>단지별 보유 데이터</h3>
+    <div class="panel tbl-wrap"><table id="sum-table"></table></div>
+  </div>
+</section>
+
+<footer>거래금액은 신고가 기준(만원)이며 참고용입니다. · 데이터 출처: 국토교통부 실거래가 공개시스템</footer>
+</div>
+
+<script>
+'use strict';
+/* ═══════════════ data layer ═══════════════ */
+const SEED = [{"apt": "래미안센트럴스위트", "area": 72.79, "ym": "202604", "day": 24, "price": 208500, "dong": "-", "floor": 8}, {"apt": "래미안센트럴스위트", "area": 84.94, "ym": "202604", "day": 23, "price": 230000, "dong": "709동", "floor": 11}, {"apt": "래미안센트럴스위트", "area": 84.93, "ym": "202602", "day": 7, "price": 242200, "dong": "708동", "floor": 11}, {"apt": "래미안센트럴스위트", "area": 84.94, "ym": "202511", "day": 29, "price": 247000, "dong": "708동", "floor": 17}, {"apt": "래미안센트럴스위트", "area": 84.91, "ym": "202510", "day": 19, "price": 240000, "dong": "702동", "floor": 15}, {"apt": "래미안센트럴스위트", "area": 84.94, "ym": "202510", "day": 17, "price": 240000, "dong": "709동", "floor": 12}, {"apt": "래미안센트럴스위트", "area": 84.97, "ym": "202506", "day": 27, "price": 234000, "dong": "702동", "floor": 12}, {"apt": "래미안센트럴스위트", "area": 84.94, "ym": "202506", "day": 14, "price": 215000, "dong": "707동", "floor": 3}, {"apt": "래미안센트럴스위트", "area": 84.94, "ym": "202505", "day": 14, "price": 208500, "dong": "707동", "floor": 16}, {"apt": "래미안센트럴스위트", "area": 84.91, "ym": "202505", "day": 10, "price": 197000, "dong": "707동", "floor": 9}, {"apt": "래미안센트럴스위트", "area": 84.94, "ym": "202505", "day": 3, "price": 199000, "dong": "707동", "floor": 15}, {"apt": "래미안센트럴스위트", "area": 84.94, "ym": "202504", "day": 26, "price": 201000, "dong": "708동", "floor": 4}, {"apt": "래미안센트럴스위트", "area": 84.97, "ym": "202503", "day": 20, "price": 210000, "dong": "707동", "floor": 18}, {"apt": "래미안센트럴스위트", "area": 84.97, "ym": "202503", "day": 19, "price": 195000, "dong": "702동", "floor": 9}, {"apt": "래미안센트럴스위트", "area": 84.94, "ym": "202503", "day": 8, "price": 194000, "dong": "702동", "floor": 9}, {"apt": "래미안센트럴스위트", "area": 84.94, "ym": "202502", "day": 23, "price": 197000, "dong": "702동", "floor": 9}, {"apt": "래미안센트럴스위트", "area": 72.93, "ym": "202502", "day": 22, "price": 174000, "dong": "701동", "floor": 3}, {"apt": "래미안센트럴스위트", "area": 84.94, "ym": "202502", "day": 20, "price": 200000, "dong": "708동", "floor": 18}, {"apt": "래미안센트럴스위트", "area": 84.93, "ym": "202410", "day": 19, "price": 190000, "dong": "708동", "floor": 14}, {"apt": "래미안센트럴스위트", "area": 84.94, "ym": "202407", "day": 20, "price": 179000, "dong": "709동", "floor": 3}, {"apt": "래미안센트럴스위트", "area": 84.97, "ym": "202407", "day": 13, "price": 187000, "dong": "707동", "floor": 13}, {"apt": "래미안센트럴스위트", "area": 84.94, "ym": "202405", "day": 31, "price": 172000, "dong": "702동", "floor": 2}, {"apt": "래미안센트럴스위트", "area": 84.94, "ym": "202405", "day": 18, "price": 179800, "dong": "707동", "floor": 9}, {"apt": "래미안센트럴스위트", "area": 72.93, "ym": "202404", "day": 30, "price": 150800, "dong": "701동", "floor": 4}, {"apt": "래미안센트럴스위트", "area": 84.94, "ym": "202404", "day": 29, "price": 180000, "dong": "702동", "floor": 17}, {"apt": "래미안센트럴스위트", "area": 84.97, "ym": "202404", "day": 27, "price": 166000, "dong": "702동", "floor": 2}, {"apt": "래미안센트럴스위트", "area": 84.97, "ym": "202404", "day": 11, "price": 175000, "dong": "707동", "floor": 9}, {"apt": "래미안센트럴스위트", "area": 84.94, "ym": "202307", "day": 27, "price": 167000, "dong": "709동", "floor": 11}, {"apt": "래미안센트럴스위트", "area": 84.91, "ym": "202305", "day": 17, "price": 160000, "dong": "702동", "floor": 8}, {"apt": "래미안센트럴스위트", "area": 84.97, "ym": "202205", "day": 24, "price": 185000, "dong": "-", "floor": 2}, {"apt": "래미안센트럴스위트", "area": 84.91, "ym": "202205", "day": 19, "price": 190000, "dong": "-", "floor": 3}, {"apt": "래미안센트럴스위트", "area": 84.93, "ym": "202107", "day": 31, "price": 188000, "dong": "-", "floor": 9}, {"apt": "래미안센트럴스위트", "area": 72.93, "ym": "202106", "day": 12, "price": 170000, "dong": "-", "floor": 15}, {"apt": "래미안센트럴스위트", "area": 84.94, "ym": "202104", "day": 17, "price": 185000, "dong": "-", "floor": 20}, {"apt": "래미안센트럴스위트", "area": 84.94, "ym": "202101", "day": 16, "price": 180000, "dong": "-", "floor": 18}, {"apt": "래미안센트럴스위트", "area": 84.94, "ym": "202101", "day": 12, "price": 179500, "dong": "-", "floor": 5}, {"apt": "래미안센트럴스위트", "area": 84.97, "ym": "202012", "day": 11, "price": 174000, "dong": "-", "floor": 7}, {"apt": "래미안센트럴스위트", "area": 84.94, "ym": "202011", "day": 28, "price": 160500, "dong": "-", "floor": 1}, {"apt": "래미안센트럴스위트", "area": 84.97, "ym": "202011", "day": 28, "price": 170000, "dong": "-", "floor": 11}, {"apt": "래미안센트럴스위트", "area": 72.79, "ym": "202011", "day": 14, "price": 154000, "dong": "-", "floor": 2}, {"apt": "래미안센트럴스위트", "area": 72.93, "ym": "202008", "day": 11, "price": 161500, "dong": "-", "floor": 11}, {"apt": "래미안센트럴스위트", "area": 84.93, "ym": "202004", "day": 26, "price": 175000, "dong": "-", "floor": 19}, {"apt": "래미안센트럴스위트", "area": 84.97, "ym": "201911", "day": 16, "price": 164500, "dong": "-", "floor": 20}, {"apt": "래미안센트럴스위트", "area": 84.91, "ym": "201911", "day": 5, "price": 155000, "dong": "-", "floor": 16}, {"apt": "래미안센트럴스위트", "area": 84.94, "ym": "201910", "day": 16, "price": 140000, "dong": "-", "floor": 10}, {"apt": "래미안센트럴스위트", "area": 84.97, "ym": "201909", "day": 11, "price": 143500, "dong": "-", "floor": 5}, {"apt": "래미안센트럴스위트", "area": 84.94, "ym": "201907", "day": 22, "price": 142500, "dong": "-", "floor": 9}, {"apt": "래미안센트럴스위트", "area": 84.94, "ym": "201906", "day": 16, "price": 143500, "dong": "-", "floor": 15}, {"apt": "래미안센트럴스위트", "area": 84.93, "ym": "201901", "day": 14, "price": 130000, "dong": "-", "floor": 5}, {"apt": "래미안센트럴스위트", "area": 84.94, "ym": "201810", "day": 31, "price": 142500, "dong": "-", "floor": 7}, {"apt": "래미안센트럴스위트", "area": 84.94, "ym": "201807", "day": 27, "price": 140000, "dong": "-", "floor": 8}];
+const PALETTE = ['#d24a26','#1f5fa8','#1f7a5c','#9a4fb5','#c8851a','#2a9aa8','#b03a5b','#5b6b1f','#6457d6','#8a5a3b'];
+
+const store = (() => {           // safe storage: falls back to memory if blocked
+  try {
+    const t='__t'+Date.now(); localStorage.setItem(t,'1'); localStorage.removeItem(t);
+    return {ok:true, get:k=>localStorage.getItem(k), set:(k,v)=>localStorage.setItem(k,v), del:k=>localStorage.removeItem(k)};
+  } catch(e){ const m={}; return {ok:false, get:k=>m[k]??null, set:(k,v)=>m[k]=v, del:k=>delete m[k]}; }
+})();
+const SKEY='aptTrackerData_v1';
+
+let txns = [];
+(function init(){
+  const raw = store.get(SKEY);
+  if (raw) { try { txns = JSON.parse(raw); } catch(e){ txns = SEED.slice(); } }
+  else txns = SEED.slice();
+})();
+
+const keyOf = t => [t.apt,t.area,t.ym,t.day,t.price,t.dong,t.floor].join('|');
+function persist(){ try{ store.set(SKEY, JSON.stringify(txns)); }catch(e){} }
+
+/* selections */
+let selApts = new Set(), selAreas = new Set(), excludeLow = false;
+function aptList(){ return [...new Set(txns.map(t=>t.apt))].sort((a,b)=>a.localeCompare(b,'ko')); }
+function areaGroups(){ return [...new Set(txns.map(t=>Math.floor(t.area)))].sort((a,b)=>a-b); }
+function colorOf(apt){ const i = aptList().indexOf(apt); return PALETTE[i % PALETTE.length]; }
+function syncSelections(){
+  const apts=aptList(), areas=areaGroups();
+  selApts = new Set([...selApts].filter(a=>apts.includes(a)));
+  apts.forEach(a=>{ if(!seenApts.has(a)){ seenApts.add(a); selApts.add(a);} });
+  if(!selApts.size) selApts = new Set(apts);
+  selAreas = new Set([...selAreas].filter(g=>areas.includes(g)));
+  areas.forEach(g=>{ if(!seenAreas.has(g)){ seenAreas.add(g); selAreas.add(g);} });
+  if(!selAreas.size) selAreas = new Set(areas);
+}
+const seenApts = new Set(), seenAreas = new Set();
+
+/* filtered view for the chart */
+function visibleTxns(){
+  return txns.filter(t =>
+    selApts.has(t.apt) &&
+    selAreas.has(Math.floor(t.area)) &&
+    (!excludeLow || t.floor > 3)
+  );
+}
+
+/* ═══════════════ formatting ═══════════════ */
+const fmtPrice = p => {
+  const eok = Math.floor(p/10000), man = p % 10000;
+  if (!eok) return man.toLocaleString()+'만';
+  return man ? `${eok}억 ${man.toLocaleString()}` : `${eok}억`;
+};
+const fmtYM = ym => `${ym.slice(0,4)}년 ${+ym.slice(4)}월`;
+const fmtDate = t => `${t.ym.slice(0,4)}.${t.ym.slice(4)}.${String(t.day).padStart(2,'0')}`;
+const ymIndex = ym => (+ym.slice(0,4))*12 + (+ym.slice(4)) - 1;
+const idxToYM = i => `${Math.floor(i/12)}${String(i%12+1).padStart(2,'0')}`;
+
+/* ═══════════════ header stats ═══════════════ */
+function renderStats(){
+  document.getElementById('st-n').textContent = txns.length.toLocaleString();
+  document.getElementById('st-a').textContent = aptList().length;
+  const el = document.getElementById('st-r');
+  if (!txns.length){ el.textContent='–'; return; }
+  const yms = txns.map(t=>t.ym).sort();
+  el.textContent = `${yms[0].slice(2,4)}.${yms[0].slice(4)}–${yms[yms.length-1].slice(2,4)}.${yms[yms.length-1].slice(4)}`;
+}
+
+/* ═══════════════ chips & controls ═══════════════ */
+function renderChips(){
+  const ac = document.getElementById('apt-chips');
+  ac.innerHTML='';
+  aptList().forEach(a=>{
+    const b=document.createElement('button');
+    const on = selApts.has(a);
+    b.className='chip'+(on?' on':' off');
+    b.innerHTML=`<span class="sw" style="background:${colorOf(a)}"></span>${a}`;
+    b.onclick=()=>{ on?selApts.delete(a):selApts.add(a); renderChips(); drawChart(); };
+    ac.appendChild(b);
+  });
+  const gc = document.getElementById('area-chips');
+  gc.innerHTML='';
+  areaGroups().forEach(g=>{
+    const b=document.createElement('button');
+    const on = selAreas.has(g);
+    b.className='chip area'+(on?' on':' off');
+    b.textContent=`${g}㎡대`;
+    b.onclick=()=>{ on?selAreas.delete(g):selAreas.add(g); renderChips(); drawChart(); };
+    gc.appendChild(b);
+  });
+}
+document.getElementById('no-low').addEventListener('change', e=>{ excludeLow = e.target.checked; drawChart(); });
+
+/* ═══════════════ chart ═══════════════ */
+const cv = document.getElementById('chart'), tip = document.getElementById('tip');
+let geo = null;   // layout geometry for hover
+
+function drawChart(){
+  const box = cv.parentElement, emptyEl = document.getElementById('chart-empty');
+  const data = visibleTxns();
+  if (!data.length){ cv.style.display='none'; emptyEl.style.display='block'; tip.style.display='none'; geo=null; return; }
+  cv.style.display='block'; emptyEl.style.display='none';
+
+  const dpr = window.devicePixelRatio||1;
+  const W = box.clientWidth-28, H = (window.innerWidth<640?340:430);
+  if (W<50) return;
+  cv.width=W*dpr; cv.height=H*dpr; cv.style.width=W+'px'; cv.style.height=H+'px';
+  const ctx = cv.getContext('2d'); ctx.setTransform(dpr,0,0,dpr,0,0);
+  ctx.clearRect(0,0,W,H);
+
+  const padL=56, padR=16, padT=18, padB=34;
+  const pw=W-padL-padR, ph=H-padT-padB;
+
+  const idxs = data.map(t=>ymIndex(t.ym));
+  let i0=Math.min(...idxs)-1, i1=Math.max(...idxs)+1;
+  if (i1-i0<5){ i0-=2; i1+=2; }
+  const prices = data.map(t=>t.price);
+  let p0=Math.min(...prices), p1=Math.max(...prices);
+  const pad=(p1-p0)*0.08 || p1*0.05 || 1000; p0=Math.max(0,p0-pad); p1+=pad;
+  // nice y ticks in 억 units
+  const span=(p1-p0)/10000;
+  const stepEok = span<=2.5?0.5 : span<=5?1 : span<=12?2 : span<=25?5 : 10;
+  const step=stepEok*10000;
+  p0=Math.floor(p0/step)*step; p1=Math.ceil(p1/step)*step;
+
+  const X = i => padL + (i-i0)/(i1-i0)*pw;
+  const Y = p => padT + (1-(p-p0)/(p1-p0))*ph;
+  const monthW = pw/(i1-i0);
+
+  ctx.font='11px IBM Plex Mono, monospace';
+  /* y grid */
+  ctx.textAlign='right'; ctx.textBaseline='middle';
+  for(let p=p0;p<=p1+1;p+=step){
+    const y=Y(p);
+    ctx.strokeStyle='rgba(29,36,51,.08)'; ctx.lineWidth=1;
+    ctx.beginPath(); ctx.moveTo(padL,y); ctx.lineTo(W-padR,y); ctx.stroke();
+    ctx.fillStyle='#9aa0b0';
+    ctx.fillText((p/10000).toLocaleString()+'억', padL-8, y);
+  }
+  /* x ticks: january of each year + half-year minor */
+  ctx.textAlign='center'; ctx.textBaseline='top';
+  for(let i=i0;i<=i1;i++){
+    const m=i%12;
+    if(m===0||m===6){
+      const x=X(i);
+      ctx.strokeStyle = m===0?'rgba(29,36,51,.14)':'rgba(29,36,51,.06)';
+      ctx.beginPath(); ctx.moveTo(x,padT); ctx.lineTo(x,H-padB); ctx.stroke();
+      if(m===0){ ctx.fillStyle='#5a6275'; ctx.fillText(String(Math.floor(i/12)), x, H-padB+8); }
+    }
+  }
+  /* axis line */
+  ctx.strokeStyle='rgba(29,36,51,.35)';
+  ctx.beginPath(); ctx.moveTo(padL,H-padB); ctx.lineTo(W-padR,H-padB); ctx.stroke();
+
+  /* points (spread within month by contract day) */
+  const hoverIdx = geo?.hoverIdx ?? null;
+  const pts=[];
+  for(const t of data){
+    const mi=ymIndex(t.ym);
+    const x = X(mi) + ((t.day-15.5)/31)*monthW*0.7;
+    const y = Y(t.price);
+    pts.push({x,y,mi,t});
+  }
+  for(const p of pts){
+    const hot = hoverIdx!==null && p.mi===hoverIdx;
+    ctx.beginPath();
+    ctx.arc(p.x,p.y, hot?6:4.2, 0, Math.PI*2);
+    ctx.fillStyle = colorOf(p.t.apt);
+    ctx.globalAlpha = hoverIdx===null ? .85 : (hot?1:.25);
+    ctx.fill();
+    if(hot){ ctx.globalAlpha=1; ctx.lineWidth=2; ctx.strokeStyle='#fffdf8'; ctx.stroke(); }
+  }
+  ctx.globalAlpha=1;
+
+  /* hover month guide */
+  if(hoverIdx!==null && hoverIdx>=i0 && hoverIdx<=i1){
+    const x=X(hoverIdx);
+    ctx.strokeStyle='rgba(210,74,38,.5)'; ctx.setLineDash([4,3]); ctx.lineWidth=1;
+    ctx.beginPath(); ctx.moveTo(x,padT); ctx.lineTo(x,H-padB); ctx.stroke();
+    ctx.setLineDash([]);
+  }
+  geo = {padL,padR,padT,padB,W,H,i0,i1,X, monthW, hoverIdx, data};
+}
+
+function handleHover(clientX, clientY){
+  if(!geo) return;
+  const r = cv.getBoundingClientRect();
+  const x = clientX-r.left, y = clientY-r.top;
+  if (x<geo.padL-8||x>geo.W-geo.padR+8||y<0||y>geo.H-geo.padB+10){ clearHover(); return; }
+  const mi = Math.round(geo.i0 + (x-geo.padL)/(geo.W-geo.padL-geo.padR)*(geo.i1-geo.i0));
+  const ym = idxToYM(mi);
+  const monthTx = geo.data.filter(t=>t.ym===ym).sort((a,b)=>b.price-a.price);
+  if(!monthTx.length){ clearHover(); return; }
+  if (geo.hoverIdx!==mi){ geo.hoverIdx=mi; drawChart(); geo.hoverIdx=mi; }
+
+  const MAX=14;
+  let html = `<div class="tip-month">${fmtYM(ym)}<em>${monthTx.length}건</em></div>`;
+  monthTx.slice(0,MAX).forEach(t=>{
+    html += `<div class="trow"><span class="sw" style="background:${colorOf(t.apt)}"></span>
+      <span class="meta">${t.apt} · ${t.area}㎡ · ${t.floor}층</span>
+      <span class="pr">${fmtPrice(t.price)}</span></div>`;
+  });
+  if(monthTx.length>MAX) html+=`<div class="more">+ ${monthTx.length-MAX}건 더</div>`;
+  tip.innerHTML=html; tip.style.display='block';
+
+  const box = cv.parentElement.getBoundingClientRect();
+  const tw = tip.offsetWidth, th = tip.offsetHeight;
+  let tx = clientX-box.left+14, ty = clientY-box.top+14;
+  if (tx+tw > box.width-8) tx = clientX-box.left-tw-14;
+  if (ty+th > box.height-8) ty = Math.max(6, clientY-box.top-th-14);
+  tip.style.left=tx+'px'; tip.style.top=ty+'px';
+}
+function clearHover(){
+  tip.style.display='none';
+  if(geo && geo.hoverIdx!==null){ geo.hoverIdx=null; drawChart(); }
+}
+cv.addEventListener('mousemove', e=>handleHover(e.clientX,e.clientY));
+cv.addEventListener('mouseleave', clearHover);
+cv.addEventListener('touchstart', e=>{ const t=e.touches[0]; handleHover(t.clientX,t.clientY); }, {passive:true});
+cv.addEventListener('touchmove', e=>{ const t=e.touches[0]; handleHover(t.clientX,t.clientY); }, {passive:true});
+window.addEventListener('resize', ()=>drawChart());
+
+/* ═══════════════ transaction list ═══════════════ */
+function renderList(){
+  const root=document.getElementById('list-root');
+  root.innerHTML='';
+  const apts=aptList();
+  if(!apts.length){ root.innerHTML='<div class="panel" style="padding:50px;text-align:center;color:var(--ink-faint)">데이터가 없습니다. [데이터 관리] 탭에서 파일을 추가하세요.</div>'; return; }
+  for(const a of apts){
+    const list = txns.filter(t=>t.apt===a)
+      .sort((x,y)=> y.ym.localeCompare(x.ym) || y.day-x.day || y.price-x.price);
+    const card=document.createElement('div');
+    card.className='panel apt-card';
+    let rows='';
+    list.forEach((t,i)=>{
+      rows+=`<tr>
+        <td class="mono dim">${list.length-i}</td>
+        <td class="mono">${fmtDate(t)}</td>
+        <td class="mono">${t.area.toFixed(2)}㎡</td>
+        <td class="dim">${t.dong==='-'?'–':t.dong}</td>
+        <td class="mono">${t.floor}층${t.floor<=3?'<span class="low-tag">저층</span>':''}</td>
+        <td class="price">${fmtPrice(t.price)}</td>
+      </tr>`;
+    });
+    card.innerHTML=`
+      <div class="apt-head"><span class="sw" style="background:${colorOf(a)}"></span><h3>${a}</h3>
+        <span class="cnt">${list.length}건 · 최신순</span></div>
+      <div class="tbl-wrap"><table>
+        <thead><tr><th>NO</th><th>계약일</th><th>전용면적</th><th>동</th><th>층</th><th style="text-align:right">거래금액</th></tr></thead>
+        <tbody>${rows}</tbody>
+      </table></div>`;
+    root.appendChild(card);
+  }
+}
+
+/* ═══════════════ summary table (data page) ═══════════════ */
+function renderSummary(){
+  const tb=document.getElementById('sum-table');
+  const apts=aptList();
+  if(!apts.length){ tb.innerHTML='<tbody><tr><td style="color:var(--ink-faint)">데이터 없음</td></tr></tbody>'; return; }
+  let rows='';
+  for(const a of apts){
+    const l=txns.filter(t=>t.apt===a);
+    const yms=l.map(t=>t.ym).sort();
+    const last=l.sort((x,y)=> y.ym.localeCompare(x.ym)||y.day-x.day)[0];
+    rows+=`<tr>
+      <td><span class="sw" style="display:inline-block;width:9px;height:9px;border-radius:50%;background:${colorOf(a)};margin-right:7px;vertical-align:0"></span>${a}</td>
+      <td class="mono">${l.length}건</td>
+      <td class="mono dim">${yms[0].slice(0,4)}.${yms[0].slice(4)} ~ ${yms[yms.length-1].slice(0,4)}.${yms[yms.length-1].slice(4)}</td>
+      <td class="price">최근 ${fmtPrice(last.price)}</td></tr>`;
+  }
+  tb.innerHTML=`<thead><tr><th>단지명</th><th>거래수</th><th>기간</th><th style="text-align:right">최근 거래가</th></tr></thead><tbody>${rows}</tbody>`;
+}
+
+/* ═══════════════ file parsing (MOLIT format) ═══════════════ */
+function parseWorkbook(wb){
+  const ws = wb.Sheets[wb.SheetNames[0]];
+  const rows = XLSX.utils.sheet_to_json(ws, {header:1, raw:false, defval:''});
+  const hi = rows.findIndex(r => r.some(c=>String(c).includes('단지명')) && r.some(c=>String(c).includes('계약년월')));
+  if (hi<0) throw new Error('헤더를 찾지 못했습니다 (단지명/계약년월 열 필요). 국토부 실거래가 다운로드 파일인지 확인하세요.');
+  const hdr = rows[hi].map(c=>String(c));
+  const col = n => hdr.findIndex(h=>h.includes(n));
+  const c = {apt:col('단지명'), area:col('전용면적'), ym:col('계약년월'), day:col('계약일'),
+             price:col('거래금액'), dong:col('동'), floor:col('층'), cancel:col('해제사유'), type:col('거래유형')};
+  if (c.price<0||c.ym<0) throw new Error('필수 열(거래금액/계약년월)이 없습니다.');
+  const out=[]; let nCancel=0, nDirect=0, nBad=0;
+  for (let i=hi+1;i<rows.length;i++){
+    const r=rows[i];
+    const apt=String(r[c.apt]||'').trim();
+    if(!apt) continue;
+    const cancel = c.cancel>=0 ? String(r[c.cancel]||'').trim() : '';
+    if (cancel && cancel!=='-' ){ nCancel++; continue; }
+    const ttype = c.type>=0 ? String(r[c.type]||'').trim() : '';
+    if (ttype==='직거래'){ nDirect++; continue; }
+    const price = parseInt(String(r[c.price]).replace(/[^\d]/g,''),10);
+    const ymRaw = String(r[c.ym]).replace(/[^\d]/g,'');
+    const day   = parseInt(String(r[c.day]).replace(/[^\d]/g,''),10);
+    const area  = parseFloat(String(r[c.area]).replace(/,/g,''));
+    const floor = parseInt(String(r[c.floor]).replace(/[^\d-]/g,''),10);
+    if (!price || ymRaw.length!==6 || !isFinite(area)){ nBad++; continue; }
+    out.push({ apt, area:Math.round(area*100)/100, ym:ymRaw, day:isFinite(day)?day:1,
+               price, dong:String(r[c.dong]||'-').trim()||'-', floor:isFinite(floor)?floor:0 });
+  }
+  return {txns:out, nCancel, nDirect, nBad};
+}
+
+function mergeTxns(newOnes){
+  const have = new Set(txns.map(keyOf));
+  let added=0, dup=0;
+  for (const t of newOnes){
+    const k=keyOf(t);
+    if (have.has(k)) { dup++; continue; }
+    have.add(k); txns.push(t); added++;
+  }
+  return {added,dup};
+}
+
+function logLine(html, isErr){
+  const log=document.getElementById('log');
+  const d=document.createElement('div');
+  d.className='panel log-item'+(isErr?' err':'');
+  d.innerHTML=html;
+  log.prepend(d);
+}
+
+async function handleFiles(files){
+  for (const f of files){
+    try{
+      const buf = await f.arrayBuffer();
+      const wb = XLSX.read(buf, {type:'array'});
+      const {txns:parsed, nCancel, nDirect, nBad} = parseWorkbook(wb);
+      const {added, dup} = mergeTxns(parsed);
+      logLine(`<b>${f.name}</b>
+        <span class="ok">+${added}건 추가</span>
+        <span class="dup">중복 ${dup}건 건너뜀</span>
+        <span class="ex">제외 — 해제 ${nCancel} · 직거래 ${nDirect}${nBad?` · 형식오류 ${nBad}`:''}</span>`);
+    }catch(err){
+      logLine(`<b>${f.name}</b> <span style="color:var(--accent)">읽기 실패: ${err.message}</span>`, true);
+    }
+  }
+  persist(); refreshAll();
+}
+
+const drop=document.getElementById('drop'), fileIn=document.getElementById('file-in');
+drop.onclick=()=>fileIn.click();
+fileIn.onchange=e=>{ handleFiles([...e.target.files]); fileIn.value=''; };
+['dragover','dragenter'].forEach(ev=>drop.addEventListener(ev,e=>{e.preventDefault();drop.classList.add('over');}));
+['dragleave','drop'].forEach(ev=>drop.addEventListener(ev,e=>{e.preventDefault();drop.classList.remove('over');}));
+drop.addEventListener('drop', e=>handleFiles([...e.dataTransfer.files]));
+
+/* export / import / reset */
+document.getElementById('btn-export').onclick=()=>{
+  const blob=new Blob([JSON.stringify(txns,null,1)],{type:'application/json'});
+  const a=document.createElement('a');
+  a.href=URL.createObjectURL(blob);
+  a.download=`apt-transactions-${new Date().toISOString().slice(0,10)}.json`;
+  a.click(); URL.revokeObjectURL(a.href);
+};
+const jsonIn=document.getElementById('json-in');
+document.getElementById('btn-import').onclick=()=>jsonIn.click();
+jsonIn.onchange=async e=>{
+  const f=e.target.files[0]; if(!f) return;
+  try{
+    const arr=JSON.parse(await f.text());
+    if(!Array.isArray(arr)) throw new Error('배열 형식이 아닙니다');
+    const valid=arr.filter(t=>t&&t.apt&&t.ym&&t.price);
+    const {added,dup}=mergeTxns(valid);
+    logLine(`<b>${f.name}</b> <span class="ok">+${added}건 추가</span> <span class="dup">중복 ${dup}건</span>`);
+    persist(); refreshAll();
+  }catch(err){ logLine(`<b>${f.name}</b> <span style="color:var(--accent)">JSON 읽기 실패: ${err.message}</span>`, true); }
+  jsonIn.value='';
+};
+document.getElementById('btn-reset').onclick=()=>{
+  if(!confirm('초기 샘플 데이터(래미안센트럴스위트)로 되돌릴까요? 추가한 데이터는 사라집니다.')) return;
+  txns=SEED.slice(); persist(); logLine('<b>초기 샘플로 재설정됨</b>'); refreshAll();
+};
+document.getElementById('btn-clear').onclick=()=>{
+  if(!confirm('모든 데이터를 삭제할까요?')) return;
+  txns=[]; store.del(SKEY); logLine('<b>전체 삭제됨</b>'); refreshAll();
+};
+
+/* storage status note */
+(function(){
+  const n=document.getElementById('store-note');
+  if(store.ok) n.lastElementChild.textContent='이 브라우저에 자동 저장됩니다 — 다음에 열어도 추가한 데이터가 유지됩니다.';
+  else { n.classList.add('off'); n.lastElementChild.textContent='이 환경에서는 자동 저장이 비활성화되어 있습니다. [데이터 내보내기]로 JSON을 보관했다가 다시 가져오세요.'; }
+})();
+
+/* ═══════════════ tabs & boot ═══════════════ */
+document.querySelectorAll('nav button').forEach(b=>{
+  b.onclick=()=>{
+    document.querySelectorAll('nav button').forEach(x=>x.classList.toggle('on',x===b));
+    document.querySelectorAll('.page').forEach(p=>p.classList.toggle('on', p.id==='page-'+b.dataset.page));
+    if(b.dataset.page==='chart') drawChart();
+  };
+});
+
+function refreshAll(){
+  syncSelections();
+  renderStats(); renderChips(); drawChart(); renderList(); renderSummary();
+}
+refreshAll();
+</script>
+</body>
+</html>
