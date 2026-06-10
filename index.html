@@ -109,6 +109,10 @@ nav button.on::after{content:'';position:absolute;left:10px;right:10px;bottom:-1
 #tip .trow .pr{font-family:var(--mono);font-weight:600;font-size:12px;white-space:nowrap}
 #tip .more{color:#9aa0b0;font-size:11px;padding-top:4px}
 .empty-chart{padding:80px 20px;text-align:center;color:var(--ink-faint);font-size:14px}
+#yline{position:absolute;display:none;pointer-events:none;height:0;border-top:1px dashed rgba(29,36,51,.45);z-index:3}
+#ylab{position:absolute;display:none;pointer-events:none;z-index:4;font-family:var(--mono);font-size:10.5px;font-weight:600;
+  background:var(--ink);color:#f2efe8;border-radius:5px;padding:2px 6px;transform:translateY(-50%);white-space:nowrap;
+  box-shadow:0 2px 8px -2px rgba(29,36,51,.4)}
 
 /* ── transactions ───────────────────── */
 .apt-card{margin-bottom:18px;overflow:hidden}
@@ -137,6 +141,8 @@ td.dim{color:var(--ink-soft)}
 .drop .small{font-size:12.5px;color:var(--ink-soft)}
 .drop .small code{font-family:var(--mono);font-size:11.5px;background:var(--paper-deep);padding:1px 5px;border-radius:4px}
 #file-in{display:none}
+.molit-link{color:var(--accent);font-weight:600;text-decoration:none;border-bottom:1px solid currentColor;pointer-events:auto}
+.molit-link:hover{opacity:.75}
 .log{margin-top:14px;display:flex;flex-direction:column;gap:8px}
 .log-item{padding:11px 15px;font-size:13px;display:flex;flex-wrap:wrap;gap:6px 14px;align-items:baseline}
 .log-item b{font-weight:600}
@@ -204,6 +210,7 @@ footer{margin-top:46px;font-size:11.5px;color:var(--ink-faint);text-align:center
     <div class="chart-hint">드래그 → 기간 평균 · 클릭 → 해제</div>
     <canvas id="chart"></canvas>
     <div id="tip"></div>
+    <div id="yline"></div><div id="ylab"></div>
     <div id="chart-empty" class="empty-chart" style="display:none">표시할 거래가 없습니다 — 단지/면적 선택과 필터를 확인하세요.</div>
   </div>
 </section>
@@ -220,7 +227,7 @@ footer{margin-top:46px;font-size:11.5px;color:var(--ink-faint);text-align:center
 <section id="page-data" class="page">
   <div class="drop" id="drop">
     <div class="big">새 데이터 파일 추가 — 클릭 또는 드래그</div>
-    <div class="small">국토교통부 실거래가 공개시스템에서 받은 <code>.xlsx</code> 파일 (여러 개 동시 가능)<br>
+    <div class="small"><a class="molit-link" href="https://rt.molit.go.kr/pt/xls/xls.do?mobileAt=" target="_blank" rel="noopener">국토부 실거래가 공개시스템 ↗</a>에서 받은 <code>.xlsx</code> 파일 (여러 개 동시 가능)<br>
     기존 데이터와 겹치는 거래는 자동으로 건너뛰고, 새 거래만 추가합니다. 해제(취소)·직거래 건은 제외됩니다.</div>
   </div>
   <input type="file" id="file-in" accept=".xlsx,.xls,.csv" multiple>
@@ -247,8 +254,8 @@ footer{margin-top:46px;font-size:11.5px;color:var(--ink-faint);text-align:center
 <script>
 'use strict';
 /* ═══════════════ version ═══════════════ */
-const APP_VERSION = '1.5';
-const APP_BUILT   = '2026-06-04 18:20 KST';
+const APP_VERSION = '1.7';
+const APP_BUILT   = '2026-06-04 18:33 KST';
 document.getElementById('ver-badge').textContent = `v${APP_VERSION} · ${APP_BUILT}`;
 
 /* ═══════════════ data layer ═══════════════ */
@@ -358,7 +365,7 @@ let dragSt = null;    // mouse-drag state
 function drawChart(){
   const box = cv.parentElement, emptyEl = document.getElementById('chart-empty');
   const data = visibleTxns();
-  if (!data.length){ cv.style.display='none'; emptyEl.style.display='block'; tip.style.display='none'; geo=null; return; }
+  if (!data.length){ cv.style.display='none'; emptyEl.style.display='block'; tip.style.display='none'; if(typeof hideYLine==='function') hideYLine(); geo=null; return; }
   cv.style.display='block'; emptyEl.style.display='none';
 
   const dpr = window.devicePixelRatio||1;
@@ -383,7 +390,7 @@ function drawChart(){
   const step=stepEok*10000;
   p0=Math.floor(p0/step)*step; p1=Math.ceil(p1/step)*step;
   if(logY && p0<=0) p0=Math.max(1, Math.min(...prices)*0.8);
-  const ly0=Math.log(p0), ly1=Math.log(p1);
+  const ly0=Math.log(Math.max(p0,1)), ly1=Math.log(p1);
 
   const X = i => padL + (i-i0)/(i1-i0)*pw;
   const Y = p => padT + (1-(logY ? (Math.log(p)-ly0)/(ly1-ly0) : (p-p0)/(p1-p0)))*ph;
@@ -458,7 +465,7 @@ function drawChart(){
     ctx.beginPath(); ctx.moveTo(x,padT); ctx.lineTo(x,H-padB); ctx.stroke();
     ctx.setLineDash([]);
   }
-  geo = {padL,padR,padT,padB,W,H,i0,i1,X, monthW, hoverIdx, data};
+  geo = {padL,padR,padT,padB,W,H,i0,i1,X, monthW, hoverIdx, data, ph, p0, p1, ly0, ly1, logY};
 }
 
 function handleHover(clientX, clientY){
@@ -496,6 +503,31 @@ function handleHover(clientX, clientY){
   tip.innerHTML=html; tip.style.display='block';
   placeTip(clientX, clientY);
 }
+const ylineEl=document.getElementById('yline'), ylabEl=document.getElementById('ylab');
+function priceAtY(y){
+  const f = 1-(y-geo.padT)/geo.ph;
+  return geo.logY ? Math.exp(geo.ly0 + f*(geo.ly1-geo.ly0)) : geo.p0 + f*(geo.p1-geo.p0);
+}
+function updateYLine(clientX, clientY){
+  if(!geo){ hideYLine(); return; }
+  const r=cv.getBoundingClientRect();
+  const x=clientX-r.left, y=clientY-r.top;
+  if(x<geo.padL||x>geo.W-geo.padR||y<geo.padT||y>geo.H-geo.padB){ hideYLine(); return; }
+  const box=cv.parentElement.getBoundingClientRect();
+  const off=r.top-box.top, offL=r.left-box.left;
+  ylineEl.style.display='block';
+  ylineEl.style.left=(offL+geo.padL)+'px';
+  ylineEl.style.width=(geo.W-geo.padL-geo.padR)+'px';
+  ylineEl.style.top=(off+y)+'px';
+  const p=priceAtY(y);
+  const eok=p/10000;
+  ylabEl.textContent = eok>=10 ? eok.toFixed(1)+'억' : eok.toFixed(2)+'억';
+  ylabEl.style.display='block';
+  ylabEl.style.top=(off+y)+'px';
+  ylabEl.style.left=Math.max(2, offL+geo.padL-ylabEl.offsetWidth-6)+'px';
+}
+function hideYLine(){ ylineEl.style.display='none'; ylabEl.style.display='none'; }
+
 function clearHover(){
   tip.style.display='none';
   if(geo && geo.hoverIdx!==null){ geo.hoverIdx=null; drawChart(); }
@@ -552,7 +584,7 @@ function showRangeTip(clientX, clientY){
 function clearRange(){
   if(rangeSel){ rangeSel=null; tip.style.display='none'; drawChart(); }
 }
-function filtersChanged(){ clearRange(); drawChart(); }
+function filtersChanged(){ clearRange(); hideYLine(); drawChart(); }
 
 cv.addEventListener('mousedown', e=>{
   if(!geo) return;
@@ -563,6 +595,7 @@ cv.addEventListener('mousedown', e=>{
 });
 cv.addEventListener('mousemove', e=>{
   if(!geo) return;
+  updateYLine(e.clientX, e.clientY);
   if(dragSt){
     const r=cv.getBoundingClientRect(), x=e.clientX-r.left;
     if(dragSt.moved || Math.abs(x-dragSt.x0)>4){
@@ -581,7 +614,7 @@ window.addEventListener('mouseup', ()=>{
   const wasDrag=dragSt.moved; dragSt=null;
   if(!wasDrag) clearRange();          // simple click: dismiss pinned range
 });
-cv.addEventListener('mouseleave', ()=>{ if(!rangeSel && !dragSt) clearHover(); });
+cv.addEventListener('mouseleave', ()=>{ hideYLine(); if(!rangeSel && !dragSt) clearHover(); });
 cv.addEventListener('touchstart', e=>{ if(rangeSel) return; const t=e.touches[0]; handleHover(t.clientX,t.clientY); }, {passive:true});
 cv.addEventListener('touchmove', e=>{ if(rangeSel) return; const t=e.touches[0]; handleHover(t.clientX,t.clientY); }, {passive:true});
 window.addEventListener('resize', ()=>drawChart());
@@ -722,7 +755,7 @@ async function handleFiles(files){
 }
 
 const drop=document.getElementById('drop'), fileIn=document.getElementById('file-in');
-drop.onclick=()=>fileIn.click();
+drop.onclick=e=>{ if(e.target.closest('a')) return; fileIn.click(); };
 fileIn.onchange=e=>{ handleFiles([...e.target.files]); fileIn.value=''; };
 ['dragover','dragenter'].forEach(ev=>drop.addEventListener(ev,e=>{e.preventDefault();drop.classList.add('over');}));
 ['dragleave','drop'].forEach(ev=>drop.addEventListener(ev,e=>{e.preventDefault();drop.classList.remove('over');}));
